@@ -17,7 +17,7 @@ langchain-chroma
 memory_profiler
 PyMuPDF
 stqdm
-sentence-transformers==2.2.0
+sentence-transformers
 huggingface-hub
 pysqlite3-binary 
 gspread
