@@ -25,7 +25,7 @@ oauth2client
 pandas
 google-api-python-client
 pytesseract
-#google-generativeai
+google-generativeai
 pillow
 numpy
 streamlit
