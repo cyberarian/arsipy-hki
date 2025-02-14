@@ -14,7 +14,6 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 import fitz  # PyMuPDF
 import re
 from datetime import datetime
-import easyocr
 from transformers import AutoProcessor, AutoModelForVision2Seq
 import torch
 
