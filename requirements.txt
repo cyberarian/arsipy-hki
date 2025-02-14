@@ -38,4 +38,3 @@ pydantic
 werkzeug
 python-docx
 openpyxl
-fastembed==0.1.1
