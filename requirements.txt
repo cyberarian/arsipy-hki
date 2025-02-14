@@ -5,7 +5,7 @@ langchain-openai
 langchain-ollama
 #pypdf
 #faiss-cpu
-chromadb==0.4.22
+chromadb==0.5.0
 groq
 langchain-groq
 beautifulsoup4
