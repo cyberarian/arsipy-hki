@@ -19,8 +19,8 @@ from transformers import AutoProcessor, AutoModelForVision2Seq
 import torch
 
 # Configure Tesseract path
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe' # windows
-# pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract' # linux
+#pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe' # windows
+pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract' # linux
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
