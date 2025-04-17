@@ -6,35 +6,20 @@ class MarkdownFormatter:
     @staticmethod
     def format_document(content: Dict[str, Any], layout_info: Dict[str, Any]) -> str:
         try:
-            # Extract content or error message
-            searchable_text = (
-                MarkdownFormatter._create_searchable_text(content)
-                if isinstance(content.get('content'), dict)
-                else str(content.get('content', ''))
-            )
-            
-            # Handle error cases
-            if not searchable_text.strip():
-                searchable_text = "No content could be extracted from this document."
-            elif "error" in content:
-                searchable_text = f"Error: {content['error']}\n\nPartial content:\n{searchable_text}"
-            
             # Create markdown structure
             md_parts = [
-                "# " + content.get('title', 'Document Analysis'),
+                f"# {content.get('title', 'Untitled Document')}",
                 "",
                 "## Document Information",
-                f"- Processed: {datetime.now().isoformat()}",
-                f"- Provider: {content.get('metadata', {}).get('ocr_provider', 'unknown')}",
-                f"- Status: {'Success' if searchable_text else 'Failed'}",
+                f"- File Type: {layout_info['file_info']['type']}",
+                f"- Processing Date: {layout_info['processing_info']['timestamp']}",
+                f"- OCR Provider: {content.get('metadata', {}).get('ocr_provider', 'unknown')}",
+                f"- Characters: {content.get('metadata', {}).get('total_chars', 0)}",
                 "",
                 "## Extracted Content",
                 "",
-                searchable_text,
-                "",
-                "## Technical Details",
-                "```json",
-                json.dumps(layout_info, indent=2, ensure_ascii=False),
+                "```text",
+                content.get('content', 'No content available'),
                 "```"
             ]
             

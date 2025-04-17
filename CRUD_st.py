@@ -785,65 +785,90 @@ def update_document():
         conn.close()
 
 def delete_document():
-    """Delete document with admin authorization"""
-    # Check admin authentication
+    """Delete documents with bulk delete support"""
     if not st.session_state.get('admin_authenticated', False):
         st.error("⚠️ Only administrators can delete documents")
         return
         
     conn = get_db()
     try:
-        # Get lookup data
-        documents = pd.read_sql('SELECT * FROM documents', conn)
+        # Get all documents
+        docs_df = pd.read_sql('''
+            SELECT d.id, d.title, d.file_title, d.doc_date, 
+                   dept.name as department, d.file_paths
+            FROM documents d
+            LEFT JOIN departments dept ON d.department_id = dept.id
+        ''', conn)
         
-        # Add warning message
-        st.warning("⚠️ Warning: This action cannot be undone!")
+        if docs_df.empty:
+            st.info("No documents available to delete")
+            return
         
-        # Select document to delete
-        document_id = st.selectbox(
-            "Select Document to Delete", 
-            documents['id'],
-            format_func=lambda x: f"{documents[documents['id'] == x]['title'].iloc[0]} (ID: {x})"
+        # Add multiselect for bulk deletion
+        st.warning("⚠️ Warning: Deletion cannot be undone!")
+        selected_docs = st.multiselect(
+            "Select Documents to Delete",
+            options=docs_df['id'].tolist(),
+            format_func=lambda x: (
+                f"{docs_df[docs_df['id'] == x]['title'].iloc[0]} "
+                f"({docs_df[docs_df['id'] == x]['department'].iloc[0]})"
+            )
         )
         
-        if document_id:
+        if selected_docs:
+            st.info(f"Selected {len(selected_docs)} documents for deletion")
+            
             # Add confirmation requirements
-            st.info("Please confirm deletion:")
-            confirm_check = st.checkbox("I understand this action is permanent")
-            confirm_text = st.text_input("Type 'DELETE' to confirm", key="delete_confirm_text")
-                
-            # Single delete button with validation
-            if st.button("Delete Document", type="primary", key="delete_doc_button"):
+            col1, col2 = st.columns(2)
+            with col1:
+                confirm_check = st.checkbox("I understand this action is permanent")
+            with col2:
+                confirm_text = st.text_input("Type 'DELETE' to confirm")
+            
+            if st.button("Delete Selected Documents", type="primary"):
                 if not (confirm_check and confirm_text == "DELETE"):
-                    st.error("Please complete all confirmation steps:")
-                    st.write("1. Check the confirmation box")
-                    st.write("2. Type 'DELETE' in the confirmation field")
+                    st.error("Please complete all confirmation steps")
                     return
                     
                 try:
                     c = conn.cursor()
-                    # Delete associated files first
-                    doc_info = documents[documents['id'] == document_id].iloc[0]
-                    if doc_info['file_paths']:
-                        for file_path in doc_info['file_paths'].split('|'):
-                            if os.path.exists(file_path):
-                                os.remove(file_path)
+                    deleted_count = 0
                     
-                    # Delete database record
-                    c.execute('DELETE FROM documents WHERE id = ?', (document_id,))
+                    # Delete files first
+                    for doc_id in selected_docs:
+                        doc_info = docs_df[docs_df['id'] == doc_id].iloc[0]
+                        
+                        # Delete associated files
+                        if doc_info['file_paths']:
+                            for file_path in doc_info['file_paths'].split('|'):
+                                if os.path.exists(file_path):
+                                    os.remove(file_path)
+                                    
+                        # Delete markdown file if exists
+                        markdown_path = os.path.join(
+                            "extracted_text", 
+                            f"{doc_info['file_title']}.md"
+                        )
+                        if os.path.exists(markdown_path):
+                            os.remove(markdown_path)
+                        
+                        # Delete database record
+                        c.execute('DELETE FROM documents WHERE id = ?', (doc_id,))
+                        deleted_count += 1
+                    
                     conn.commit()
-                    st.success("✅ Document successfully deleted!")
+                    st.success(f"✅ Successfully deleted {deleted_count} documents!")
+                    st.rerun()  # Force page refresh
                     
-                    if st.button("Refresh", key="refresh_after_delete"):
-                        st.rerun()
                 except Exception as e:
                     conn.rollback()
-                    st.error(f"Error during deletion: {str(e)}")
-                    logger.error(f"Delete error: {str(e)}")
+                    st.error(f"Error during bulk deletion: {str(e)}")
                     
+        else:
+            st.info("Select documents to delete from the list above")
+            
     except Exception as e:
         st.error(f"Error in delete operation: {str(e)}")
-        logger.error(traceback.format_exc())
     finally:
         conn.close()
 
