@@ -10,6 +10,7 @@ import os
 import io
 import base64
 import logging
+import traceback
 from tenacity import retry, stop_after_attempt, wait_exponential
 import fitz  # PyMuPDF
 import re
@@ -18,8 +19,8 @@ from transformers import AutoProcessor, AutoModelForVision2Seq
 import torch
 
 # Configure Tesseract path
-#pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe' # windows
-pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract' # linux
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe' # windows
+#pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract' # linux
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -32,10 +33,9 @@ class EnhancedModelManager:
         # Initialize existing models
         self.groq_client = Groq(api_key=os.environ["GROQ_API_KEY"])
         genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-        self.gemini_model = genai.GenerativeModel("gemini-2.0-flash-exp")
+        self.gemini_model = genai.GenerativeModel("gemini-2.5-pro-preview-03-25")
         
-        # Initialize additional models
-        self.reader = easyocr.Reader(['en', 'id'])  # Support English and Indonesian
+        # Initialize Donut model
         self.processor = AutoProcessor.from_pretrained("microsoft/donut-base-finetuned-docvqa")
         self.model = AutoModelForVision2Seq.from_pretrained("microsoft/donut-base-finetuned-docvqa")
 
@@ -94,15 +94,15 @@ class EnhancedModelManager:
                 'confidence': 0.0
             }
             
-            # 1. Use EasyOCR for text detection
-            ocr_results = self.reader.readtext(np.array(image))
+            # Use Tesseract OCR results
+            ocr_results = [(None, line.strip(), 0.9) for line in text.split('\n') if line.strip()]
             
-            # 2. Use Donut for document understanding
+            # Use Donut for document understanding
             inputs = self.processor(image, return_tensors="pt")
             outputs = self.model.generate(**inputs, max_length=512)
             donut_text = self.processor.decode(outputs[0], skip_special_tokens=True)
             
-            # 3. Use Gemini for high-level analysis
+            # Use Gemini for high-level analysis
             gemini_prompt = f"""
             Analyze this document and extract:
             1. Document title (usually at top, often in caps)

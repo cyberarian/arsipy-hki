@@ -1,6 +1,6 @@
-__import__('pysqlite3')
+#__import__('pysqlite3')
 import sys
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+#sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 import streamlit as st
 import os
 import time
@@ -37,6 +37,7 @@ from langchain.chains import LLMChain, RetrievalQA, StuffDocumentsChain
 from langchain.prompts import PromptTemplate
 from typing import Any, List, Optional
 from document_processor import UnifiedDocumentProcessor
+from landing_page import show_landing_page
 
 def reset_chroma_db():
     """Reset the ChromaDB directory"""
@@ -107,19 +108,15 @@ def get_llm_model(model_name: str):
     Initialize and return the specified LLM model
     """
     models = {
-        "llama-3.3-70b-versatile": lambda: ChatGroq(
+        "meta-llama/llama-4-maverick-17b-128e-instruct": lambda: ChatGroq(
             groq_api_key=os.getenv('GROQ_API_KEY'),
-            model_name="llama-3.3-70b-versatile"
+            model_name="meta-llama/llama-4-maverick-17b-128e-instruct"
         ),
         "deepseek-coder": lambda: DeepSeekLLM(
-            model="deepseek-ai/deepseek-r1",
+            model="deepseek-ai/DeepSeek-V3-0324",
             api_key=os.getenv('HUGGINGFACE_API_KEY'),
             temperature=0.7,
             max_tokens=512
-        ),
-        "claude-3-sonnet": lambda: AnthropicLLM(
-            anthropic_api_key=os.getenv('ANTHROPIC_API_KEY'),
-            model_name="claude-3-sonnet-20240229"
         )
     }
     
@@ -238,111 +235,6 @@ def memory_track():
         yield
     finally:
         gc.collect()
-
-def show_landing_page():
-    """Display the landing page with logo on right side"""
-    
-    # Add custom CSS for landing page layout
-    st.markdown("""
-        <style>
-        /* Reset default margins */
-        .block-container {
-            padding-top: 0rem !important;
-            padding-bottom: 0rem !important;
-        }
-        
-        .landing-container-wrapper {
-            display: flex;
-            justify-content: center;
-            align-items: flex-start;  /* Changed from center to flex-start */
-            padding: 1rem;  /* Reduced from 2rem */
-            margin-top: -4rem;  /* Remove top margin */
-        }
-        
-        .landing-container {
-            display: flex;
-            width: 100%;
-            max-width: 1200px;
-            background: var(--background-color);
-            border-radius: 20px;
-            padding: 1.5rem;  /* Reduced from 2rem */
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            margin-top: 0;  /* Remove top margin */
-        }
-        
-        .content-column {
-            flex: 2;
-            padding-right: 2rem;
-            padding-top: 0;  /* Remove top padding */
-        }
-        
-        .logo-column {
-            flex: 1;
-            display: flex;
-            justify-content: center;
-            align-items: flex-start;  /* Changed from center to flex-start */
-            position: relative;
-            padding-top: 0;  /* Remove top padding */
-        }
-        
-        .logo-column img {
-            max-width: 100%;
-            height: auto;
-            object-fit: contain;
-        }
-        
-        /* Remove extra spaces from headings */
-        h1, h2, h3 {
-            margin-top: 0 !important;
-            padding-top: 0 !important;
-        }
-        
-        /* Adjust mobile layout */
-        @media screen and (max-width: 768px) {
-            .landing-container {
-                flex-direction: column-reverse;
-                padding: 1rem;
-            }
-            .content-column, .logo-column {
-                padding: 0.5rem 0;
-            }
-            .landing-container-wrapper {
-                padding: 0.5rem;
-            }
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-    # Open the wrapper for centering
-    st.markdown('<div class="landing-container-wrapper">', unsafe_allow_html=True)
-    
-    # Open the container
-    st.markdown('<div class="landing-container">', unsafe_allow_html=True)
-    
-    # Content column (left side)
-    st.markdown('<div class="content-column">', unsafe_allow_html=True)
-    
-    # Title and Introduction
-    st.title("Selamat datang di HKI Records Management System")
-    st.write("""    
-    #### Efisien. Aman. Andal. Didukung AI
-    
-    Mengelola proyek konstruksi membutuhkan dokumentasi yang teliti. Sistem Manajemen Rekod HKI dirancang untuk menyederhanakan dan mengamankan rekaman proyek HKI, memastikan akses, pengorganisasian, dan kepatuhan yang lancar.
-    
-    Dengan integrasi Artificial Intelligence (AI), sistem ini memberikan solusi cerdas untuk manajemen dokumen yang lebih efisien dan akurat.
-
-    """)
-    
-    # Call-to-Action button
-    if st.button("Klik disini lebih lanjut", key="access_admin_button"):
-        st.session_state['show_admin'] = True
-        st.rerun()
-        
-    st.markdown('</div>', unsafe_allow_html=True)  # Close content column
-
-    
-    # Close the container and wrapper
-    st.markdown('</div></div>', unsafe_allow_html=True)
 
 def setup_admin_sidebar():
     """Setup admin authentication and controls in sidebar"""
@@ -697,8 +589,8 @@ def show_chat_interface(llm):
     with tab1:
         # Model selection inside chatbot tab
         model_options = {
-            "Llama-3.3-70b-versatile (Groq)": "llama-3.3-70b-versatile",
-            "DeepSeek-R1 (HuggingFace)": "deepseek-r1",
+            "llama-4-maverick-17b-128e-instruct (Groq)": "meta-llama/llama-4-maverick-17b-128e-instruct",
+            "DeepSeek-V3-0324 (HuggingFace)": "deepseek-ai/DeepSeek-V3-0324",
         }
         
         selected_model = st.selectbox(
@@ -794,7 +686,7 @@ def show_chat_interface(llm):
 
         ### 💻 Teknologi
         - **Backend**: Python, ChromaDB, LangChain
-        - **AI Models**: llama-3.3-70b-versatile (Groq's API), Google Gemini 2.0 Flash
+        - **AI Models**: llama-4-maverick-17b-128e-instruct (Groq's API), Google Gemini 2.0 Flash
         - **OCR**: pytesseract, Tesseract OCR
         - **Frontend**: Streamlit
         - **Database**: Vector Store dengan Google AI Embeddings
@@ -943,7 +835,7 @@ def main():
 
     # Show landing page if not accessing admin panel
     if not st.session_state['show_admin']:
-        show_landing_page()
+        show_landing_page()  # Now using the imported function
         return
     
     # Load and validate API keys
@@ -972,7 +864,7 @@ def main():
     try:
         llm = ChatGroq(
             groq_api_key=groq_api_key,
-            model_name="llama-3.3-70b-versatile"
+            model_name="meta-llama/llama-4-maverick-17b-128e-instruct"
         )
         
         

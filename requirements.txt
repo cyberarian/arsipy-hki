@@ -1,11 +1,11 @@
 python-dotenv
-langchain 
+langchain
 langchain-community 
 langchain-openai
 langchain-ollama
 #pypdf
 #faiss-cpu
-chromadb==0.4.22
+chromadb
 groq
 langchain-groq
 beautifulsoup4
@@ -17,9 +17,8 @@ langchain-chroma
 memory_profiler
 PyMuPDF
 stqdm
-sentence-transformers
 huggingface-hub
-pysqlite3-binary 
+#pysqlite3-binary 
 gspread
 oauth2client
 pandas
@@ -38,3 +37,19 @@ pydantic
 werkzeug
 python-docx
 openpyxl
+nest_asyncio
+toml
+langchain-anthropic
+anthropic
+pdf2image
+nest-asyncio
+langchain_groq
+PyJWT
+plotly
+
+# Add these CPU-only alternatives
+tensorflow-cpu
+tensorflow-text
+tensorflow-hub
+scikit-learn>=1.3.0
+langchain-huggingface>=0.0.10
