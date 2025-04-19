@@ -38,6 +38,7 @@ from langchain.prompts import PromptTemplate
 from typing import Any, List, Optional
 from document_processor import UnifiedDocumentProcessor
 from landing_page import show_landing_page
+from retrieval.fusion_retriever import FusionRetriever
 
 def reset_chroma_db():
     """Reset the ChromaDB directory"""
@@ -125,75 +126,83 @@ def get_llm_model(model_name: str):
         
     return models[model_name]()
 
-def get_rag_chain(llm, retriever):
-    """Create an enhanced RAG pipeline specialized for construction documents"""
-    
-    QA_CHAIN_PROMPT = ChatPromptTemplate.from_template("""
-    Your role: You are Arsipy, a specialized AI assistant for HKI Construction Records Management System.
-    You are an expert in construction documentation, engineering drawings, technical specifications, and project records.
-
-    Language: Adapt responses to match user's language (Indonesian/English) with formal professional tone.
-    
-    ### Context:
-    {context}
-    
-    ### Question:
-    {question}
-    
-    ### Response Structure:
-    <analysis>
-    1. Document Classification:
-    - Identify document type (Drawing, Specification, Report, etc.)
-    - Identify relevant project phase/stage
-    - Note document status and revision if available
-
-    2. Technical Analysis:
-    - Extract key technical information
-    - Identify relevant specifications or standards
-    - Note any critical parameters or requirements
-
-    3. Project Context:
-    - Connect to project timeline/phase
-    - Consider interdependencies with other documents
-    - Note any approval or verification requirements
-    </analysis>
-    
-    <response>
-    Provide a structured response:
-
-    1. Direct Answer:
-    - Clear, concise technical response
-    - Reference specific sections/pages
-    - Include relevant measurements/specifications
-
-    2. Supporting Details:
-    - Reference related documents if applicable
-    - Cite relevant standards or codes
-    - Note any dependencies or prerequisites
-
-    3. Document Trail:
-    - Document number/revision
-    - Department/Division
-    - Status and approval info if relevant
-
-    Format citations as:
-    [Source: "Document Title - Drawing No./Spec No. - Rev.X"]
-    </response>
-    
-    Context: {context}
-    lang:id-ID
-    """)
-
-    # Rest of the chain setup remains the same
-    llm_chain = LLMChain(
-        llm=llm, 
-        prompt=QA_CHAIN_PROMPT,
-        output_key="answer"
+def get_rag_chain(llm, vectorstore):
+    """Create RAG chain with fusion retrieval"""
+    # Create base retriever
+    base_retriever = vectorstore.as_retriever(
+        search_type="similarity",
+        search_kwargs={"k": 8}  # Get more candidates for better fusion
     )
     
+    # Initialize fusion retriever
+    retriever = FusionRetriever(
+        retriever=base_retriever,
+        llm=llm,  # Pass LLM for query expansion
+        k=4,  # Final number of documents
+        weight_k=60.0,  # RRF ranking constant
+        use_query_expansion=True  # Enable query expansion
+    )
+
+    QA_CHAIN_PROMPT = ChatPromptTemplate.from_template("""
+    [SYSTEM]
+    Anda adalah Arsipy, asisten ahli dokumentasi konstruksi untuk HKI Records Management System.
+
+    [CONTEXT]
+    {context}
+
+    [QUESTION]
+    {question}
+
+    [FORMAT JAWABAN]
+    RINGKASAN
+    -------------------------------
+    [Ringkasan singkat dan langsung dari jawaban utama]
+
+    DETAIL INFORMASI
+    -------------------------------
+    A. [Poin Utama Pertama]
+       - Spesifikasi: [detail spesifik]
+       - Standar: [standar terkait]
+       - Pengukuran: [nilai/satuan]
+
+    B. [Poin Utama Kedua]
+       - Spesifikasi: [detail spesifik]
+       - Referensi: [referensi teknis]
+
+    SPESIFIKASI TEKNIS
+    -------------------------------
+    | Parameter | Nilai/Keterangan |
+    |-----------|------------------|
+    | Standar   | [nilai/detail]  |
+    | Dimensi   | [nilai/detail]  |
+    | Teknis    | [nilai/detail]  |
+
+    REFERENSI DOKUMEN
+    -------------------------------
+    [1] [Nama Dokumen] | Halaman [X] | [ID/Kode]
+    [2] [Nama Dokumen] | Halaman [Y] | [ID/Kode]
+
+    CATATAN PENTING
+    -------------------------------
+    [Informasi kritis atau peringatan jika ada]
+
+    """)
+
+    # Create the chain components
     document_prompt = PromptTemplate(
-        template="Context:\ncontent:{page_content}\nsource:{source}",
+        template="""
+Content:
+{page_content}
+
+Source: {source}
+        """.strip(),
         input_variables=["page_content", "source"]
+    )
+    
+    llm_chain = LLMChain(
+        llm=llm,
+        prompt=QA_CHAIN_PROMPT,
+        output_key="answer"
     )
     
     qa_chain = RetrievalQA(
@@ -201,32 +210,28 @@ def get_rag_chain(llm, retriever):
             llm_chain=llm_chain,
             document_prompt=document_prompt,
             document_variable_name="context",
-            document_separator="\n\n"
+            document_separator="\n---\n"
         ),
         retriever=retriever,
         return_source_documents=True
     )
     
     return qa_chain
+
 # Set the page layout to wide
 st.set_page_config(layout="wide")
-
 # Load the config.toml file
 config = toml.load(".streamlit/config.toml")
-
 # Apply the custom CSS
 st.markdown(f"<style>{config['custom_css']['css']}</style>", unsafe_allow_html=True)
-
 # Load the admin password from the .env file
 admin_password = os.getenv('ADMIN_PASSWORD')
-
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
 # Memory management context
 @contextmanager
 def memory_track():
@@ -240,15 +245,11 @@ def setup_admin_sidebar():
     """Setup admin authentication and controls in sidebar"""
     if 'admin_authenticated' not in st.session_state:
         st.session_state.admin_authenticated = False
-
     with st.sidebar:
         st.title("Admin Panel")
-
-        # Admin authentication
         if not st.session_state.admin_authenticated:
             input_password = st.text_input("Admin Password", type="password")
             if st.button("Login"):
-                # Use the admin password from the .env file
                 if input_password == admin_password:
                     st.session_state.admin_authenticated = True
                     st.success("Admin authenticated!")
@@ -260,15 +261,13 @@ def setup_admin_sidebar():
             if st.button("Logout"):
                 st.session_state.admin_authenticated = False
                 st.rerun()
-
-            # Show admin controls only when authenticated
             st.divider()
+            # Show admin controls only when authenticated
             show_admin_controls()
 
 def show_admin_controls():
     """Display admin controls when authenticated"""
     st.sidebar.header("Document Management")
-    
     # Update file uploader to accept more file types
     uploaded_files = st.sidebar.file_uploader(
         "Upload Documents", 
@@ -276,7 +275,6 @@ def show_admin_controls():
         accept_multiple_files=True,
         help="Supported formats: PDF, TXT, PNG, JPG, JPEG, XLSX, DOCX"
     )
-    
     # Process documents button
     if uploaded_files:
         if st.sidebar.button("Process Documents", key="process_docs_button"):
@@ -288,14 +286,11 @@ def show_admin_controls():
                     st.sidebar.text(f"Type: {file_type}")
                 
             process_uploaded_files(uploaded_files)
-    
     # Show currently processed files
     if st.session_state.uploaded_file_names:
         st.sidebar.write("Processed Documents:")
         for filename in st.session_state.uploaded_file_names:
             st.sidebar.write(f"- {filename}")
-    
-    # Reset system
     st.sidebar.divider()
     st.sidebar.header("System Reset")
     if st.sidebar.button("Reset Everything", key="reset_everything_button"):
@@ -303,14 +298,12 @@ def show_admin_controls():
             try:
                 # Clear cache first
                 clear_cache()
-                
                 # Clear vector store
                 if os.path.exists(CHROMA_DB_DIR):
                     shutil.rmtree(CHROMA_DB_DIR)
                     os.makedirs(CHROMA_DB_DIR)
                     st.session_state.uploaded_file_names.clear()
                     st.session_state.vectorstore = None
-                
                 st.sidebar.success("Complete reset successful!")
                 st.rerun()
             except Exception as e:
@@ -321,6 +314,7 @@ def show_admin_controls():
             st.success("Document database reset successfully")
         else:
             st.error("Failed to reset document database")
+
 def extract_text_from_pdf(pdf_file) -> str:
     """Extract text content from a PDF file"""
     try:
@@ -348,10 +342,8 @@ def get_document_text(file) -> str:
             text = file.getvalue().decode('utf-8')
         else:
             raise ValueError(f"Unsupported file type: {file.type}")
-            
         if not text.strip():
             raise ValueError("Extracted text is empty")
-            
         return text
     except Exception as e:
         logger.error(f"Error extracting text from {file.name}: {str(e)}")
@@ -359,7 +351,6 @@ def get_document_text(file) -> str:
 
 class EnhancedDocumentProcessor:
     """Advanced document processing with chunking and table detection"""
-    
     def __init__(self, chunk_size=1000, chunk_overlap=200, ocr_enabled=True, table_detection_enabled=True):
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
@@ -375,27 +366,21 @@ class EnhancedDocumentProcessor:
         try:
             # Extract text based on file type
             text = get_document_text(file_stream)
-            
             if not text:
                 logger.warning(f"No text extracted from {filename}")
                 return []
-            
             # Split text into chunks
             chunks = self.text_splitter.split_text(text)
-            
-            # Create documents with metadata
             documents = []
+            # Create documents with metadata
             base_metadata = {
                 "source": filename,
                 "chunk_size": self.chunk_size,
                 "chunk_overlap": self.chunk_overlap
             }
-            
             # Add custom metadata if provided
             if metadata:
                 base_metadata.update(metadata)
-            
-            # Create document objects
             for i, chunk in enumerate(chunks):
                 doc_metadata = base_metadata.copy()
                 doc_metadata["chunk_index"] = i
@@ -405,9 +390,7 @@ class EnhancedDocumentProcessor:
                         metadata=doc_metadata
                     )
                 )
-            
             return documents
-            
         except Exception as e:
             logger.error(f"Error processing file {filename}: {str(e)}")
             logger.error(traceback.format_exc())
@@ -433,7 +416,6 @@ def process_uploaded_files(uploaded_files: List):
         if not uploaded_files:
             st.sidebar.warning("No files selected for processing")
             return
-
         # Initialize vectorstore with consistent embeddings
         if st.session_state.vectorstore is None:
             try:
@@ -442,9 +424,8 @@ def process_uploaded_files(uploaded_files: List):
                 logger.error(f"Vectorstore error: {str(e)}")
                 st.sidebar.error("Failed to initialize document storage")
                 return
-
-        processor = UnifiedDocumentProcessor(vectorstore=st.session_state.vectorstore)
         
+        processor = UnifiedDocumentProcessor(vectorstore=st.session_state.vectorstore)
         with st.spinner('Processing documents...'):
             success_count = 0
             for file in stqdm(uploaded_files):
@@ -452,10 +433,8 @@ def process_uploaded_files(uploaded_files: List):
                     if file.name in st.session_state.uploaded_file_names:
                         st.sidebar.info(f"Skipping {file.name} - already processed")
                         continue
-
-                    st.sidebar.info(f"Processing: {file.name}")
                     
-                    # Add specific handling based on file type
+                    st.sidebar.info(f"Processing: {file.name}")
                     if file.type == 'application/pdf':
                         st.sidebar.info("Checking if OCR is needed...")
                     elif file.type.startswith('image/'):
@@ -466,11 +445,9 @@ def process_uploaded_files(uploaded_files: List):
                         st.sidebar.info("Processing Word document...")
                     
                     result = processor.process_document(file)
-                    
                     if result['success']:
                         success_count += 1
                         st.session_state.uploaded_file_names.add(file.name)
-                        
                         # Create CRUD record with OCR status
                         crud_data = {
                             'title': result['metadata']['title'],
@@ -486,7 +463,6 @@ def process_uploaded_files(uploaded_files: List):
                             'status': 'Versi Akhir',
                             'ocr_processed': result['metadata'].get('ocr_used', False)
                         }
-                        
                         try:
                             create_document_record(crud_data, file)
                             st.sidebar.success(f"✓ CRUD record created for: {file.name}")
@@ -495,7 +471,6 @@ def process_uploaded_files(uploaded_files: List):
                         except Exception as e:
                             logger.error(f"CRUD error: {str(e)}")
                             st.sidebar.warning(f"⚠️ CRUD record creation failed")
-                        
                         st.sidebar.success(f"✓ Document processed: {file.name}")
                         st.sidebar.info(f"""
                         Document details:
@@ -505,17 +480,13 @@ def process_uploaded_files(uploaded_files: List):
                         """)
                     else:
                         st.sidebar.error(f"Failed: {file.name} - {result.get('error')}")
-                        
                 except Exception as e:
                     logger.error(f"Processing error: {str(e)}")
                     st.sidebar.error(f"Error processing {file.name}")
-
-            # Show final status
             if success_count > 0:
                 st.sidebar.success(f"✅ Successfully processed {success_count} documents")
             else:
                 st.sidebar.error("No documents were processed successfully")
-                
     except Exception as e:
         logger.error(f"Document processing error: {str(e)}")
         st.sidebar.error("Processing failed. Check logs for details.")
@@ -525,13 +496,10 @@ def initialize_or_load_vectorstore():
     """Initialize or load the vector store with consistent 768 dimensions"""
     try:
         from langchain_community.embeddings import HuggingFaceEmbeddings
-        
-        # Use consistent model with 768 dimensions
         embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-mpnet-base-v2",
             model_kwargs={'device': 'cpu'}
         )
-        
         # Reset ChromaDB if dimensions mismatch
         try:
             vectorstore = Chroma(
@@ -543,21 +511,18 @@ def initialize_or_load_vectorstore():
             emb = embeddings.embed_query(test_text)
             if len(emb) != 768:
                 raise ValueError("Embedding dimensions mismatch")
-            
         except Exception as e:
             logger.warning(f"ChromaDB reset needed: {str(e)}")
             # Force reset if dimensions mismatch
             if os.path.exists(CHROMA_DB_DIR):
                 shutil.rmtree(CHROMA_DB_DIR)
                 os.makedirs(CHROMA_DB_DIR)
-            
             vectorstore = Chroma(
                 persist_directory=CHROMA_DB_DIR,
                 embedding_function=embeddings
             )
         
         return vectorstore
-        
     except Exception as e:
         logger.error(f"Error initializing vector store: {str(e)}")
         logger.error(traceback.format_exc())
@@ -567,59 +532,52 @@ def clear_cache():
     """Clear all cached data"""
     cache_data.clear()
     cache_resource.clear()
-    
+
 def show_chat_interface(llm):
     """Display the main chat interface"""
     # Add logo
     col1, col2, col3 = st.columns([1,100,1])
     with col2:
         st.image("assets/logoHKI.png", width=150)
-    
     # Create tabs - add tab5 for Document List
     tab1, tab6, tab5, tab3, tab2, tab4 = st.tabs([
         "💬 Chatbot",
         "📝 Records Management",
         "📋 Document List",
-        "❓ Panduan", 
+        "❓ Panduan",
         "ℹ️ Tentang",
         "📚 Resources"
         
-    ])    
-    
+    ])
     with tab1:
         # Model selection inside chatbot tab
         model_options = {
             "llama-4-maverick-17b-128e-instruct (Groq)": "meta-llama/llama-4-maverick-17b-128e-instruct",
             "DeepSeek-V3-0324 (HuggingFace)": "deepseek-ai/DeepSeek-V3-0324",
         }
-        
         selected_model = st.selectbox(
             "Select AI Model",
             options=list(model_options.keys()),
             key='model_selector'
         )
-        
         # Get the actual model identifier
         model_id = model_options[selected_model]
-        
         # Add a greeting message
         if not st.session_state.uploaded_file_names:
             st.info("👋 Welcome to HKI Records Management System: Transforming Records Management with AI Innovation")
-        
         # Initialize chat history in session state if it doesn't exist
         if 'chat_history' not in st.session_state:
             st.session_state.chat_history = []
-    
         # Create a form for the chat input
         with st.form(key='chat_form'):
             prompt1 = st.text_input("Enter your question about the documents", key='question_input')
             submit_button = st.form_submit_button("Submit Question")
-            
-        # Display chat history
+        # Display chat history with better formatting
         for q, a in st.session_state.chat_history:
-            st.write("Question:", q)
-            st.write("Answer:", a)
-            st.divider()
+            with st.container():
+                st.info(f"❓ **Pertanyaan:** {q}")
+                st.markdown(a)  # Use markdown for formatted answer
+                st.divider()
         
         if submit_button and prompt1:
             try:
@@ -636,7 +594,7 @@ def show_chat_interface(llm):
                         )
                         
                         # Initialize the enhanced RAG chain
-                        qa_chain = get_rag_chain(llm, retriever)
+                        qa_chain = get_rag_chain(llm, vectorstore)
                         
                         with st.spinner('Searching through documents...'):
                             start = time.process_time()
@@ -646,10 +604,10 @@ def show_chat_interface(llm):
                             # Add the new Q&A to the chat history
                             st.session_state.chat_history.append((prompt1, response['result']))
                             
-                            # Display the latest response
-                            st.write("Latest Response:")
-                            st.write(response['result'])
-                            st.write(f"Response time: {elapsed_time:.2f} seconds")
+                            # Display the latest response with proper formatting
+                            st.write("💡 **Jawaban Terbaru:**")
+                            st.markdown(response['result'])
+                            st.caption(f"⏱️ Waktu respons: {elapsed_time:.2f} detik")
                             
                             # Clear the input box by rerunning the app
                             st.rerun()
@@ -658,21 +616,20 @@ def show_chat_interface(llm):
             except Exception as e:
                 st.error(f"Error processing question: {str(e)}")
                 logger.error(traceback.format_exc())
-        
         # Add a clear chat history button
         if st.session_state.chat_history and st.button("Clear Chat History"):
             st.session_state.chat_history = []
             st.rerun()
-            
         # Footer
         st.markdown("---")
         st.markdown("Powered by Arsipy", help="cyberariani@gmail.com")
+    
     with tab2:
         st.write("""
         ### 🎯 Tentang HKI Records Management System
                 
         Dengan HKI Records Management System, informasi dari record digital diolah menjadi akurat dan terstruktur. Nikmati kemudahan akses, pemahaman dokumen, dan peningkatan efisiensi dalam mencari informasi.
-        
+
         ### 🔍 Fitur Utama
         **RAG-based Chatbot**
         - Menjawab pertanyaan tentang manual arsip
@@ -690,9 +647,8 @@ def show_chat_interface(llm):
         - **OCR**: pytesseract, Tesseract OCR
         - **Frontend**: Streamlit
         - **Database**: Vector Store dengan Google AI Embeddings
-
-        """)
         
+        """)
         st.subheader("⚠️ Penting")
         st.info("""
         * Aplikasi ini tidak merekam percakapan
@@ -710,26 +666,21 @@ def show_chat_interface(llm):
         1. Buka tab **💬 Chat**
         2. Ketik pertanyaan tentang manual arsip
         3. Tunggu jawaban dari chatbot
-        4. Lihat referensi sumber yang disertakan
+        4. Lihat referensi sumber yang disertakan    
     
-            """)
-        
+        """)
         # Footer
         st.markdown("---")
         st.markdown("Powered by Arsipy", help="cyberariani@gmail.com")
     
     with tab4:
         st.title("📚 Sumber Dokumen")
-        
         st.markdown("""
         Sistem ini menggunakan sumber rekod dari berbagai departemen.
-        
-        
         """)
-        
         # Footer
         st.markdown("---")
-        st.markdown("Powered by Arsipy", help="cyberariani@gmail.com")    
+        st.markdown("Powered by Arsipy", help="cyberariani@gmail.com")
     
     with tab5:
         st.subheader("Document List")
@@ -737,17 +688,13 @@ def show_chat_interface(llm):
             if crud_init_db is None:
                 st.error("Document List is currently unavailable")
                 return
-                
             # Initialize CRUD database
             crud_init_db()
-            
             # Call only the read function
             read_documents()
-                
         except Exception as e:
             st.error(f"Error in Document List: {str(e)}")
             st.error("Please check the database connection")
-        
         # Footer
         st.markdown("---")
         st.markdown("Powered by Arsipy", help="cyberariani@gmail.com")
@@ -755,14 +702,11 @@ def show_chat_interface(llm):
     with tab6:
         try:
             st.subheader("Records Management System")
-            
             if crud_init_db is None:
                 st.error("Records Management System is currently unavailable")
                 return
-                
             # Initialize CRUD database
             crud_init_db()
-            
             # Create CRUD menu but remove Read operation
             menu = ["Create", "Update", "Delete"]  # Removed "Read" since it's now in tab5
             choice = st.selectbox(
@@ -770,14 +714,11 @@ def show_chat_interface(llm):
                 menu,
                 key="crud_operation_tab6"
             )
-            
             # Add spacing
             st.write("")
-            
             # Display operation title
             if choice:
                 st.subheader(f"{choice} Document")
-            
             # Call CRUD functions except Read
             if choice == "Create":
                 create_document()
@@ -785,11 +726,9 @@ def show_chat_interface(llm):
                 update_document()
             elif choice == "Delete":
                 delete_document()
-                
         except Exception as e:
             st.error(f"Error in Records Management: {str(e)}")
             st.error("Please check the CRUD implementation")
-        
         # Footer
         st.markdown("---")
         st.markdown("Powered by Arsipy", help="cyberariani@gmail.com")
@@ -797,55 +736,42 @@ def show_chat_interface(llm):
 def initialize_or_load_vectorstore():
     """Initialize or load the vector store with consistent embedding dimensions"""
     try:
-        try:
-            # Only use one embedding model with 768 dimensions
-            from langchain_community.embeddings import HuggingFaceEmbeddings
-            
-            embeddings = HuggingFaceEmbeddings(
-                model_name="sentence-transformers/all-mpnet-base-v2",  # Fixed 768 dimensions
-                model_kwargs={'device': 'cpu'}
-            )
-            
-            vectorstore = Chroma(
-                persist_directory=CHROMA_DB_DIR,
-                embedding_function=embeddings
-            )
-            
-        except Exception as e:
-            logger.error(f"Error initializing embeddings: {str(e)}")
-            raise
-        
+        # Only use one embedding model with 768 dimensions
+        from langchain_community.embeddings import HuggingFaceEmbeddings
+        embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-mpnet-base-v2",  # Fixed 768 dimensions
+            model_kwargs={'device': 'cpu'}
+        )
+        vectorstore = Chroma(
+            persist_directory=CHROMA_DB_DIR,
+            embedding_function=embeddings
+        )
         return vectorstore
-        
     except Exception as e:
-        logger.error(f"Error initializing vector store: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error(f"Error initializing embeddings: {str(e)}")
         raise
-    
+
 def main():
     # Disable ChromaDB telemetry
     os.environ['ANONYMIZED_TELEMETRY'] = 'False'
-    
-    set_verbose(True)
     load_dotenv()
     
+    set_verbose(True)
     # Initialize session state for showing admin panel
     if 'show_admin' not in st.session_state:
         st.session_state['show_admin'] = False
-
     # Show landing page if not accessing admin panel
     if not st.session_state['show_admin']:
         show_landing_page()  # Now using the imported function
         return
-    
+
     # Load and validate API keys
     groq_api_key = os.getenv('GROQ_API_KEY')
     google_api_key = os.getenv("GOOGLE_API_KEY")
-
     if not groq_api_key or not google_api_key:
         st.error("Missing API keys. Please check your .env file.")
         st.stop()
-
+    
     os.environ["GOOGLE_API_KEY"] = google_api_key
     
     # Create ChromaDB directory
@@ -853,31 +779,27 @@ def main():
     CHROMA_DB_DIR = "chroma_db"
     if not os.path.exists(CHROMA_DB_DIR):
         os.makedirs(CHROMA_DB_DIR)
-
+    
     # Initialize session state
     if 'uploaded_file_names' not in st.session_state:
         st.session_state.uploaded_file_names = set()
     if 'vectorstore' not in st.session_state:
         st.session_state.vectorstore = None
-
-    # Initialize LLM and prompt template
+    
     try:
+        # Initialize LLM and prompt template
         llm = ChatGroq(
             groq_api_key=groq_api_key,
             model_name="meta-llama/llama-4-maverick-17b-128e-instruct"
         )
-        
-        
-            
     except Exception as e:
         st.error(f"Error initializing LLM: {str(e)}")
         st.stop()
-
+    
     # Setup sidebar with admin controls
     setup_admin_sidebar()
-    
     # Show main chat interface
     show_chat_interface(llm)
-    
+
 if __name__ == "__main__":
     main()

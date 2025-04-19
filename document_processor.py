@@ -34,7 +34,7 @@ class UnifiedDocumentProcessor:
         os.makedirs(self.markdown_dir, exist_ok=True)
         self.quality_threshold = 0.7  # Minimum quality score for Tesseract output
         genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-        self.gemini_model = genai.GenerativeModel("gemini-2.0-flash")
+        self.gemini_model = genai.GenerativeModel("gemini-2.5-flash-preview-04-17")
         self.image_analyze_prompt = """
         Analyze this image from a construction/engineering document:
         1. Describe what is shown in the image
